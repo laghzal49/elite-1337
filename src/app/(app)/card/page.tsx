@@ -1,3 +1,5 @@
+import { cardSharingEnabled, getCardSharing } from '@/lib/card-sharing';
+import { updateCardSharing } from './sharing-actions';
 import { KiwiNote } from '@/components/kiwi-guide';
 import { CardPicture } from '@/components/card-picture';
 import { getCardArt } from '@/lib/card-art-store';
@@ -8,13 +10,20 @@ import { siteUrl } from '@/lib/site';
 export const metadata = { title: 'Rank card', robots: { index: false } };
 export const dynamic = 'force-dynamic';
 
-/** The student's own rank card: pick its picture and copy the snippet for a GitHub README. The signed link is built per student and never stored. */
-export default async function CardPage() {
+/** The student's own rank card: pick its picture and copy the snippet for a GitHub README. Optional sharing controls are isolated from sign-in and rankings. */
+export default async function CardPage({ searchParams }: { searchParams: Promise<{ sharing?: string }> }) {
   const user = await requireStudent();
-  const path = cardPath(Number(user.id));
+  const result = (await searchParams).sharing;
+  const sharing = await getCardSharing(Number(user.id)).catch(() => null);
+  const path = sharing ? cardPath(Number(user.id), sharing.version) : null;
   if (!path) return <main className="shell cd"><KiwiNote><h2>Rank card unavailable</h2><p>Try again in a minute.</p></KiwiNote></main>;
   const art = await getCardArt(Number(user.id));
   return <main className="shell pl pc cd">
-    <CardPicture path={path} current={art ? { source: art.source } : null} origin={siteUrl.origin}/>
+    {cardSharingEnabled() && <section className="xp-panel"><h1>Card sharing</h1>
+      <p>{sharing?.enabled ? 'Sharing is enabled.' : 'Sharing is disabled.'} Regenerating invalidates your previous link. Previously cached images may remain visible for several minutes or longer on other sites.</p>
+      {result && <p role="status">{result === 'saved' ? 'Sharing updated.' : 'Could not update sharing. Try again.'}</p>}
+      <form action={updateCardSharing}><button className="pl-chip" name="action" value="regenerate">{sharing?.enabled ? 'Regenerate link' : 'Enable sharing'}</button>{sharing?.enabled && <button className="pl-chip" name="action" value="disable">Disable sharing</button>}</form>
+    </section>}
+    {sharing?.enabled && <CardPicture path={path} current={art ? { source: art.source } : null} origin={siteUrl.origin}/> }
   </main>;
 }

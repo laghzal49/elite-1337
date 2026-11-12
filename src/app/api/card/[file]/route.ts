@@ -1,3 +1,4 @@
+import { cardSharingEnabled, getCardSharing } from '@/lib/card-sharing';
 import { NextRequest } from 'next/server';
 import { loadRankingDataset } from '@/lib/dataset';
 import { validCardToken } from '@/lib/card-token';
@@ -11,7 +12,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 const headers = (maxAge: number, stale = 86400) => ({
   'Content-Type': 'image/svg+xml; charset=utf-8',
-  'Cache-Control': `public, max-age=${Math.min(maxAge, 300)}, s-maxage=${maxAge}, stale-while-revalidate=${stale}`,
+  'Cache-Control': cardSharingEnabled() ? 'private, no-store' : `public, max-age=${maxAge}, s-maxage=${maxAge}, stale-while-revalidate=${stale}`,
   'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'",
   'X-Content-Type-Options': 'nosniff',
 });
@@ -19,12 +20,18 @@ const notFound = new Response(null, { status: 404, headers: { 'Cache-Control': '
 
 /**
  * A student's rank card for a GitHub README. Public on purpose (GitHub's image proxy sends no cookies), so the signed
- * token in the link is the permission: only students who shared their card have one. Nothing is stored.
+ * token in the link is the permission: only students who shared their card have one. Optional revocation stores a per-owner version.
  */
 export async function GET(request: NextRequest, context: { params: Promise<{ file: string }> }) {
   const match = /^(\d{1,12})\.svg$/.exec((await context.params).file);
   const id = match ? Number(match[1]) : 0;
-  if (!id || !validCardToken(id, request.nextUrl.searchParams.get('t') ?? '')) return notFound.clone();
+  const version = request.nextUrl.searchParams.get('v') ?? 'legacy';
+  if (version.length > 80 || !validCardToken(id, request.nextUrl.searchParams.get('t') ?? '', version)) return notFound.clone();
+  let sharing;
+  try { sharing = await getCardSharing(id); }
+  catch { return new Response(null, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
+  if (!sharing) return new Response(null, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+  if (!sharing.enabled || !validCardToken(id, request.nextUrl.searchParams.get('t') ?? '', sharing.version)) return notFound.clone();
   const style = parseCardStyle(request.nextUrl.searchParams);
   const state = await loadRankingDataset();
   if (state.status !== 'ready') return new Response(renderPendingCard(style.theme, style.font), { headers: headers(60, 0) });
